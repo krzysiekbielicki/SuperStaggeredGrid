@@ -916,6 +916,7 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
 
         while (nextCol >= 0 && mItemTops[nextCol] > fillTo && position >= 0) {
             final View child = obtainView(position, null);
+            child.setOnClickListener(this);
             LayoutParams lp = (LayoutParams) child.getLayoutParams();
 
             if (child.getParent() != this) {
