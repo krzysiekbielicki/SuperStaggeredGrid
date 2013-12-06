@@ -20,6 +20,8 @@ import android.content.Context;
 import android.content.res.TypedArray;
 import android.database.DataSetObserver;
 import android.graphics.Canvas;
+import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.support.v4.util.SparseArrayCompat;
@@ -36,6 +38,7 @@ import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.ListAdapter;
 
@@ -59,6 +62,9 @@ import java.util.Arrays;
 public class SuperStaggeredGridView extends ViewGroup implements View.OnClickListener {
     private static final String TAG = "StaggeredGridView";
     private static final boolean DEBUG = false;
+    Rect mSelectorRect = new Rect();
+    int mSelectorPosition = AbsListView.INVALID_POSITION;
+    Drawable mSelector;
 
     /*
      * There are a few things you should know if you're going to make modifications
@@ -134,10 +140,10 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
 
     private final EdgeEffectCompat mTopEdge;
     private final EdgeEffectCompat mBottomEdge;
-    private AdapterView.OnItemClickListener onItemClickListener;
+    private OnItemClickListener onItemClickListener;
     private View mEmptyView;
 
-    public void setOnItemClickListener(AdapterView.OnItemClickListener listener) {
+    public void setOnItemClickListener(OnItemClickListener listener) {
         this.onItemClickListener = listener;
     }
 
@@ -145,7 +151,7 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
     public void onClick(View view) {
         if(onItemClickListener != null) {
             LayoutParams lp = (LayoutParams) view.getLayoutParams();
-            onItemClickListener.onItemClick(null, view, lp.position, lp.id);
+            onItemClickListener.onItemClick(this, view, lp.position, lp.id);
         }
     }
 
@@ -155,6 +161,10 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
 
     public View getEmptyView() {
         return mEmptyView;
+    }
+
+    public int getItemMargin() {
+        return mItemMargin;
     }
 
     private static final class LayoutRecord {
@@ -710,6 +720,7 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
         layoutChildren(mDataChanged);
         fillDown(mFirstPosition + getChildCount(), 0);
         fillUp(mFirstPosition - 1, 0);
+        //offsetChildren(0);
         mPopulating = false;
         mDataChanged = false;
     }
@@ -753,6 +764,10 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
             final View child = getChildAt(i);
             child.layout(child.getLeft(), child.getTop() + offset,
                     child.getRight(), child.getBottom() + offset);
+            LayoutParams lp = (LayoutParams) child.getLayoutParams();
+            if(lp.position == mSelectorPosition) {
+                    positionSelector(child);
+            }
         }
 
         final int colCount = mColCount;
@@ -916,6 +931,9 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
 
         while (nextCol >= 0 && mItemTops[nextCol] > fillTo && position >= 0) {
             final View child = obtainView(position, null);
+            child.setOnClickListener(this);
+            if(position == mSelectorPosition)
+                positionSelector(child);
             LayoutParams lp = (LayoutParams) child.getLayoutParams();
 
             if (child.getParent() != this) {
@@ -1018,13 +1036,6 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
      * @return the max overhang beyond the end of the view of any added items at the bottom
      */
     final int fillDown(int fromPosition, int overhang) {
-        if(mEmptyView != null) {
-            if(mItemCount == 0) {
-                mEmptyView.setVisibility(View.VISIBLE);
-                return 0;
-            }
-            mEmptyView.setVisibility(View.GONE);
-        }
         final int paddingLeft = getPaddingLeft();
         final int paddingRight = getPaddingRight();
         final int itemMargin = mItemMargin;
@@ -1038,6 +1049,8 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
         while (nextCol >= 0 && mItemBottoms[nextCol] < fillTo && position < mItemCount) {
             final View child = obtainView(position, null);
             child.setOnClickListener(this);
+            if(position == mSelectorPosition)
+                positionSelector(child);
             LayoutParams lp = (LayoutParams) child.getLayoutParams();
 
             if (child.getParent() != this) {
@@ -1291,7 +1304,6 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
         final LayoutParams sglp = (LayoutParams) lp;
         sglp.position = position;
         sglp.viewType = positionViewType;
-
         return view;
     }
 
@@ -1393,6 +1405,7 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
         final Parcelable superState = super.onSaveInstanceState();
         final SavedState ss = new SavedState(superState);
         final int position = mFirstPosition;
+        ss.columnCount = mColCount;
         ss.position = position;
         if (position >= 0 && mAdapter != null && position < mAdapter.getCount()) {
             ss.firstId = mAdapter.getItemId(position);
@@ -1408,9 +1421,113 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
         SavedState ss = (SavedState) state;
         super.onRestoreInstanceState(ss.getSuperState());
         mDataChanged = true;
+        mColCount = ss.columnCount;
         mFirstPosition = ss.position;
         mRestoreOffset = ss.topOffset;
         requestLayout();
+    }
+
+    @Override
+    protected void dispatchDraw(Canvas canvas) {
+        super.dispatchDraw(canvas);
+        drawSelector(canvas);
+    }
+
+    private void drawSelector(Canvas canvas) {
+        if (!mSelectorRect.isEmpty() && mSelector != null && mSelectorPosition != AbsListView.INVALID_POSITION) {
+            final Drawable selector = mSelector;
+            selector.setBounds(mSelectorRect);
+            selector.draw(canvas);
+        }
+    }
+
+    void positionSelector(View sel) {
+        /*if(sel.getBottom() > getHeight()) {
+            offsetChildren(getHeight() - sel.getBottom() + mItemMargin);
+            return;
+        } else if(sel.getTop() < 0) {
+            offsetChildren( - sel.getTop() - mItemMargin);
+            return;
+        }*/
+
+        final Rect selectorRect = mSelectorRect;
+        selectorRect.set(sel.getLeft(), sel.getTop(), sel.getRight(), sel.getBottom());
+        /*if (sel instanceof AbsListView.SelectionBoundsAdjuster) {
+            ((AbsListView.SelectionBoundsAdjuster)sel).adjustListItemSelectionBounds(selectorRect);
+        }*/
+
+        positionSelector(selectorRect.left, selectorRect.top, selectorRect.right,
+                selectorRect.bottom);
+
+        /*final boolean isChildViewEnabled = mIsChildViewEnabled;
+        if (sel.isEnabled() != isChildViewEnabled) {
+            mIsChildViewEnabled = !isChildViewEnabled;
+            if (getSelectedItemPosition() != INVALID_POSITION) {
+                refreshDrawableState();
+            }
+        }*/
+        invalidate();
+    }
+
+    private void positionSelector(int l, int t, int r, int b) {
+        mSelectorRect.set(l, t, r, b);
+    }
+
+    public void setSelector(Drawable sel) {
+        mSelector = sel;
+    }
+
+    public void setActiveItem(int pos) {
+        mSelectorPosition = pos;
+        ensureItemVisible(pos);
+        postInvalidate();
+    }
+
+    private void ensureItemVisible(int pos) {
+        int lastChild = 0;
+        int lastChildHeight = 0;
+        if(pos < getFirstPosition()) {
+            final View child = getChildAt(0);
+            if(child == null)
+                return;
+            int top = child.getTop();
+            for(int i = getFirstPosition() -1 ; i >= pos; i--) {
+                LayoutRecord lr = mLayoutRecords.get(i);
+                if(lr.column == 0 || i == pos) {
+                    top -= lr.height + getItemMargin();
+                }
+            }
+            top -= getItemMargin();
+            offsetChildren(-top);
+            return;
+            //mLayoutRecords.get(getFirstPosition())
+            //fillDown(pos)
+        } else {
+            final int childCount = getChildCount();
+            for (int i = 0; i < childCount; i++) {
+                final View child = getChildAt(i);
+                LayoutParams lp = (LayoutParams) child.getLayoutParams();
+                lastChild = child.getBottom();
+                lastChildHeight = child.getHeight();
+                if(lp.position == mSelectorPosition) {
+                    if(lastChild > getHeight()) {
+                        offsetChildren(getHeight() - lastChild - getItemMargin());
+                    } else if(lastChild-lastChildHeight < 0) {
+                        offsetChildren(lastChildHeight - lastChild + getItemMargin());
+                    } else {
+                        positionSelector(child);
+                    }
+                    return;
+                }
+            }
+        }
+        if(mLayoutRecords.get(pos) == null) {
+            offsetChildren(-lastChildHeight-getItemMargin());
+        } else {
+            //for(int i = lastChild)
+        }
+        //mSelectorRect.setEmpty();
+
     }
 
     public static class LayoutParams extends ViewGroup.LayoutParams {
@@ -1582,6 +1699,13 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
             mDataChanged = true;
             mOldItemCount = mItemCount;
             mItemCount = mAdapter.getCount();
+            if(mEmptyView != null) {
+                if(mItemCount == 0) {
+                    mEmptyView.setVisibility(View.VISIBLE);
+                } else {
+                    mEmptyView.setVisibility(View.GONE);
+                }
+            }
 
             // TODO: Consider matching these back up if we have stable IDs.
             mRecycler.clearTransientViews();
@@ -1609,6 +1733,7 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
     }
 
     static class SavedState extends BaseSavedState {
+        int columnCount;
         long firstId = -1;
         int position;
         int topOffset;
@@ -1619,6 +1744,7 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
 
         private SavedState(Parcel in) {
             super(in);
+            columnCount = in.readInt();
             firstId = in.readLong();
             position = in.readInt();
             topOffset = in.readInt();
@@ -1627,6 +1753,7 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
         @Override
         public void writeToParcel(Parcel out, int flags) {
             super.writeToParcel(out, flags);
+            out.writeInt(columnCount);
             out.writeLong(firstId);
             out.writeInt(position);
             out.writeInt(topOffset);
@@ -1635,6 +1762,7 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
         @Override
         public String toString() {
             return "StaggereGridView.SavedState{"
+			+ " columnCount=" + columnCount
 			+ Integer.toHexString(System.identityHashCode(this))
 			+ " firstId=" + firstId
 			+ " position=" + position + "}";
@@ -1650,5 +1778,9 @@ public class SuperStaggeredGridView extends ViewGroup implements View.OnClickLis
                 return new SavedState[size];
             }
         };
+    }
+
+    public interface OnItemClickListener {
+        public void onItemClick(SuperStaggeredGridView superStaggeredGridView, View view, int position, long id);
     }
 }
